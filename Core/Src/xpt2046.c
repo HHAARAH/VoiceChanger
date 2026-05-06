@@ -477,23 +477,35 @@ uint8_t XPT2046_Touch_Calibrate ( void )
 
    
 
-uint8_t XPT2046_Get_TouchedPoint ( strType_XPT2046_Coordinate * pDisplayCoordinate, strType_XPT2046_TouchPara * pTouchPara )
+uint8_t XPT2046_Get_TouchedPoint(strType_XPT2046_Coordinate *pDisplayCoordinate, strType_XPT2046_TouchPara *pTouchPara)
 {
-	uint8_t ucRet = 1;           
-	
-	strType_XPT2046_Coordinate strScreenCoordinate; 
-	
+    strType_XPT2046_Coordinate buf[5];
+    uint8_t i, j;
 
-  if ( XPT2046_ReadAdc_Smooth_XY ( & strScreenCoordinate ) )
-  {    
-		pDisplayCoordinate ->x = ( ( pTouchPara ->dX_X * strScreenCoordinate .x ) + ( pTouchPara ->dX_Y * strScreenCoordinate .y ) + pTouchPara ->dX );        
-		pDisplayCoordinate ->y = ( ( pTouchPara ->dY_X * strScreenCoordinate .x ) + ( pTouchPara ->dY_Y * strScreenCoordinate .y ) + pTouchPara ->dY );
+    for (i = 0; i < 5; i++)
+    {
+        if (!XPT2046_ReadAdc_Smooth_XY(&buf[i])) return 0;
+        HAL_Delay(1);
+    }
 
-  }
-	 
-	else ucRet = 0;            
-	
-	return ucRet;
-	
-	
-} 
+    for (i = 0; i < 4; i++)
+    {
+        for (j = 0; j < 4 - i; j++)
+        {
+            if (buf[j].x > buf[j+1].x)
+            {
+                strType_XPT2046_Coordinate temp = buf[j];
+                buf[j] = buf[j+1];
+                buf[j+1] = temp;
+            }
+        }
+    }
+
+    uint32_t avg_x = (buf[1].x + buf[2].x + buf[3].x) / 3;
+    uint32_t avg_y = (buf[1].y + buf[2].y + buf[3].y) / 3;
+
+    pDisplayCoordinate->x = (pTouchPara->dX_X * avg_x) + (pTouchPara->dX_Y * avg_y) + pTouchPara->dX;
+    pDisplayCoordinate->y = (pTouchPara->dY_X * avg_x) + (pTouchPara->dY_Y * avg_y) + pTouchPara->dY;
+
+    return 1;
+}
