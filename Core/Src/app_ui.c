@@ -5,7 +5,6 @@
 
 extern SPI_HandleTypeDef hspi1;
 
-/* Forward decls */
 static void Draw_Player_Overlay(void);
 static void Draw_File_Page(void);
 static void Draw_Record_Page(void);
@@ -209,14 +208,16 @@ static void ApplyVoiceEffect(void)
 
     Mp3WriteRegister(SPI_WRAMADDR, 0x1E, 0x04);
     Mp3WriteRegister(SPI_WRAM, (speed >> 8) & 0xFF, speed & 0xFF);
-
+    //PlaySpeed in DSP RAM
     uint8_t bass = 0, freq = 0;
     switch(current_state.selected_char) {
-        case CHAR_CAT:   bass = 0x00; freq = 0xA0; break;
-        case CHAR_BIRD:  bass = 0x00; freq = 0xC0; break;
+        case CHAR_CAT:   bass = 0x4A; freq = 0x00; break;
+        case CHAR_DOG:   bass = 0x00; freq = 0xA8; break;
+        case CHAR_BIRD:  bass = 0x6C; freq = 0x00; break;
         default: break;
     }
     Mp3WriteRegister(SPI_BASS, bass, freq);
+    //[ Treble_Amp (4bit) | Treble_Freq (4bit) | Bass_Amp (4bit) | Bass_Freq (4bit) ]
 }
 /* ================================================================
    Audio task (playback + recording)
@@ -225,10 +226,8 @@ void AudioTask(void)
 {
     /* ---- Playback ---- */
     if (current_state.is_playing) {
-        // Batch feed: feed up to 256 bytes per cycle to prevent UI starvation
         for (int batch = 0; batch < 8; batch++) {
-            if (!VS1053_CheckDREQ()) break; // FIFO full, yield to UI
-
+            if (!VS1053_CheckDREQ()) break;
             if (current_state.play_buf_idx >= current_state.play_buf_len) {
                 UINT br = 0;
                 FRESULT res = f_read(&current_state.play_fil, current_state.play_buffer, 512, &br);
@@ -263,13 +262,12 @@ void AudioTask(void)
             current_state.play_bytes_read += chunk;
         }
 
-        /* Update progress bar once per cycle */
         current_state.play_progress = (current_state.play_bytes_read * 100) / current_state.play_file_size;
         uint16_t w = (200 * current_state.play_progress) / 100;
         LCD_Clear(20, 150, w, 12, BLUE);
     }
 
-    /* ---- Recording (unchanged) ---- */
+    /* ---- Recording ---- */
     if (current_state.is_recording) {
         uint16_t hdat1 = RecReadRegister(SPI_HDAT1);
         uint16_t words = ((hdat1 >> 8) > (hdat1 & 0xFF)) ? (hdat1 >> 8) : (hdat1 & 0xFF);
@@ -294,13 +292,11 @@ void AudioTask(void)
 
 static void StartPlayback(const char *filename)
 {
-    // 1. Clean up previous playback state
     current_state.is_playing = 0;
-    f_close(&current_state.play_fil); // Safe to call even if already closed
+    f_close(&current_state.play_fil);
     VS1053_SoftReset();
     while(!VS1053_CheckDREQ());
 
-    // 2. Open new file
     if (f_open(&current_state.play_fil, filename, FA_READ) != FR_OK) {
         printf("Failed to open: %s\n", filename);
         return;
@@ -311,7 +307,6 @@ static void StartPlayback(const char *filename)
     current_state.play_buf_len = 0;
     current_state.play_progress = 0;
 
-    // 3. Apply voice effect & start
     ApplyVoiceEffect();
     current_state.is_playing = 1;
     printf("Start Playing: %s (%lu B)\n", filename, current_state.play_file_size);
@@ -346,7 +341,6 @@ static void Handle_Record_Touch(uint16_t x, uint16_t y)
     if (x > 60 && x < 180 && y > 140 && y < 260) {
         current_state.is_recording ^= 1;
         if (!current_state.is_recording) {
-            /* Drain remaining FIFO */
             uint16_t hdat1 = RecReadRegister(SPI_HDAT1);
             uint16_t words = ((hdat1 >> 8) > (hdat1 & 0xFF)) ? (hdat1 >> 8) : (hdat1 & 0xFF);
             while (words--) {
@@ -354,7 +348,6 @@ static void Handle_Record_Touch(uint16_t x, uint16_t y)
                 current_state.rec_buffer[current_state.rec_buf_len++] = (uint8_t)w;
                 current_state.rec_buffer[current_state.rec_buf_len++] = (uint8_t)(w >> 8);
             }
-            /* Flush buffer */
             if (current_state.rec_buf_len > 0) {
                 UINT bw;
                 f_write(&current_state.rec_fil, current_state.rec_buffer, current_state.rec_buf_len, &bw);
@@ -364,7 +357,8 @@ static void Handle_Record_Touch(uint16_t x, uint16_t y)
             VS1053_StopRecording();
             current_state.active_overlay = OVERLAY_SAVE;
             Draw_Save_Overlay();
-        } else {
+        }
+        else {
             char fname[13];
             int idx = 0;
             for (int i = 0; i <= 9999; i++) {
@@ -419,7 +413,7 @@ static void Handle_File_Touch(uint16_t x, uint16_t y)
 }
 
 /* ================================================================
-   Public interface
+   Loop
    ================================================================ */
 void UI_Init(void) { Draw_Main_Page(); }
 
@@ -432,7 +426,6 @@ void UI_Loop(void)
 
         uint16_t x = coord.x, y = coord.y;
 
-        /* Overlays have priority */
         if (current_state.active_overlay == OVERLAY_SAVE) {
             if (x > 40 && x < 110 && y > 170 && y < 210) {
                 f_lseek(&current_state.rec_fil, 0);
@@ -442,7 +435,8 @@ void UI_Loop(void)
                 current_state.active_overlay = OVERLAY_NONE;
                 current_state.current_page = PAGE_MAIN;
                 Draw_Main_Page();
-            } else if (x > 130 && x < 200 && y > 170 && y < 210) {
+            }
+            else if (x > 130 && x < 200 && y > 170 && y < 210) {
                 current_state.active_overlay = OVERLAY_NONE;
                 Draw_Record_Page();
             }
@@ -450,7 +444,6 @@ void UI_Loop(void)
         }
 
         if (current_state.active_overlay == OVERLAY_PLAYER) {
-            // Close button: fully release resources
             if (x > 160 && x < 220 && y > 180 && y < 220) {
                 current_state.active_overlay = OVERLAY_NONE;
                 current_state.is_playing = 0;
@@ -459,20 +452,17 @@ void UI_Loop(void)
                 Draw_File_Page();
                 return;
             }
-            // Play button
             if (!current_state.is_playing && x > 20 && x < 80 && y > 180 && y < 220) {
                 StartPlayback(current_state.current_file);
                 Draw_Player_Overlay();
                 return;
             }
-            // Pause button: stop feeding data, keep file open for resume
             if (current_state.is_playing && x > 80 && x < 160 && y > 180 && y < 220) {
                 current_state.is_playing = 0;
                 Draw_Player_Overlay();
                 printf("Paused.\n");
                 return;
             }
-            // Delete button
             if (!current_state.is_playing && x > 90 && x < 150 && y > 180 && y < 220) {
                 if (f_unlink(current_state.current_file) == FR_OK) {
                     printf("Deleted: %s\n", current_state.current_file);
@@ -484,7 +474,6 @@ void UI_Loop(void)
             return;
         }
 
-        /* Normal pages */
         switch (current_state.current_page) {
             case PAGE_MAIN:   Handle_Main_Touch(x, y);   break;
             case PAGE_CHAR:   Handle_Char_Touch(x, y);   break;

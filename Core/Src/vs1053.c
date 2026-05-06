@@ -10,9 +10,6 @@ static inline void XCS_High(void) { HAL_GPIO_WritePin(XCS_PORT, XCS_PIN, GPIO_PI
 static inline void XDCS_Low(void)  { HAL_GPIO_WritePin(XDCS_PORT, XDCS_PIN, GPIO_PIN_RESET); }
 static inline void XDCS_High(void) { HAL_GPIO_WritePin(XDCS_PORT, XDCS_PIN, GPIO_PIN_SET); }
 
-/* ================================================================
-   Low-level SPI
-   ================================================================ */
 static uint8_t SPI_TransferByte(uint8_t data)
 {
     uint8_t rx;
@@ -20,9 +17,6 @@ static uint8_t SPI_TransferByte(uint8_t data)
     return rx;
 }
 
-/* ================================================================
-   DREQ handling
-   ================================================================ */
 uint8_t VS1053_CheckDREQ(void)
 {
     return (HAL_GPIO_ReadPin(DREQ_PORT, DREQ_PIN) == GPIO_PIN_SET);
@@ -34,9 +28,6 @@ static void VS1053_WaitDREQ(void)
     while (!VS1053_CheckDREQ() && --timeout);
 }
 
-/* ================================================================
-   Standard SCI register access (waits for DREQ)
-   ================================================================ */
 void Mp3WriteRegister(uint8_t addr, uint8_t high, uint8_t low)
 {
     VS1053_WaitDREQ();
@@ -61,9 +52,6 @@ uint16_t Mp3ReadRegister(uint8_t addr)
     return val;
 }
 
-/* ================================================================
-   Recording-only register access (no DREQ wait)
-   ================================================================ */
 void RecWriteRegister(uint8_t addr, uint8_t high, uint8_t low)
 {
     XCS_Low();
@@ -107,7 +95,7 @@ void VS1053_SoftReset(void)
     VS1053_WaitDREQ();
 
     Mp3WriteRegister(SPI_CLOCKF, 0x98, 0x00);
-    VS1053_SetVolume(0x10, 0x10);
+    VS1053_SetVolume(0x10, 0x10); //0x0000 = No decay; 0xFEFE = Mute
 }
 
 void VS1053_Init(void)
@@ -116,9 +104,6 @@ void VS1053_Init(void)
     VS1053_SoftReset();
 }
 
-/* ================================================================
-   Sine test
-   ================================================================ */
 void VS1053_SineTest(void)
 {
     Mp3WriteRegister(SPI_MODE, 0x08, 0x20);
@@ -138,9 +123,6 @@ void VS1053_SineTest(void)
     VS1053_SoftReset();
 }
 
-/* ================================================================
-   Generic playback (memory buffer)
-   ================================================================ */
 void VS1053_PlayMP3(const uint8_t *data, uint32_t size)
 {
     uint32_t pos = 0;
@@ -169,13 +151,15 @@ void VS1053_StartPCMRecording(uint16_t sampleRate)
     RecWriteRegister(SPI_AICTRL0, sampleRate >> 8, sampleRate & 0xFF);
     RecWriteRegister(SPI_AICTRL1, 0x00, 0x00);
     RecWriteRegister(SPI_AICTRL2, 0x10, 0x00);
-    RecWriteRegister(SPI_AICTRL3, 0x00, 0x01);  /* stereo, linear PCM */
-    RecWriteRegister(SPI_MODE, 0x18, 0x00);      /* SM_SDINEW | SM_ADPCM, onboard mic */
+    RecWriteRegister(SPI_AICTRL3, 0x00, 0x01);
+    RecWriteRegister(SPI_MODE, 0x18, 0x00);
+    //Line in Input
+    //RecWriteRegister(SPI_MODE, 0x58, 0x00);
     HAL_Delay(50);
 }
 
 void VS1053_StopRecording(void)
 {
-    RecWriteRegister(SPI_MODE, 0x08, 0x04);  /* SM_SDINEW | SM_RESET */
+    RecWriteRegister(SPI_MODE, 0x08, 0x04);
     HAL_Delay(10);
 }
